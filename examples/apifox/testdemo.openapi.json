@@ -1,0 +1,421 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "默认模块",
+    "description": "linker-pay 当前代码中的 HTTP/RPC 接口，供 Apifox 通过 OpenAPI/Swagger 导入。",
+    "version": "1.0.0"
+  },
+  "tags": [
+    {
+      "name": "订单"
+    }
+  ],
+  "paths": {
+    "/api/order/detail": {
+      "get": {
+        "summary": "订单详情",
+        "deprecated": false,
+        "description": "TOB 接口。根据订单编号查询订单主信息、支付流水、状态历史和业务回调记录。",
+        "operationId": "getOrderDetail",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "query",
+            "description": "订单编号",
+            "required": true,
+            "example": "ORDER202605210001",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "description": "",
+            "example": "7595fbcb0a5a41d38c48c02feed24ff3",
+            "schema": {
+              "type": "string",
+              "default": "7595fbcb0a5a41d38c48c02feed24ff3"
+            }
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "",
+            "example": "TOnkxn6xfluqb",
+            "schema": {
+              "type": "string",
+              "default": "TOnkxn6xfluqb"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "订单详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetailBaseResp"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BaseResp": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "响应编码",
+            "example": "0"
+          },
+          "message": {
+            "type": "string",
+            "description": "响应消息",
+            "example": "success"
+          },
+          "data": {
+            "description": "响应数据",
+            "type": "null"
+          }
+        }
+      },
+      "OrderInfoResp": {
+        "type": "object",
+        "description": "订单信息响应。",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "主键。",
+            "example": 1
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "example": "2026-06-05 10:00:00"
+          },
+          "creatorId": {
+            "type": "string",
+            "description": "创建人。",
+            "example": "user001"
+          },
+          "creatorName": {
+            "type": "string",
+            "description": "创建人昵称。",
+            "example": "张三"
+          },
+          "updateTime": {
+            "type": "string",
+            "description": "修改时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "example": "2026-06-05 10:10:00"
+          },
+          "updateId": {
+            "type": "string",
+            "description": "修改人。",
+            "example": "user001"
+          },
+          "tenantId": {
+            "type": "string",
+            "description": "企业代码。",
+            "example": "tenant001"
+          },
+          "orderId": {
+            "type": "string",
+            "description": "订单编号，全局唯一。",
+            "example": "202606051000000001"
+          },
+          "transactionId": {
+            "type": "string",
+            "description": "支付平台流水号。",
+            "example": "202606052200000000001"
+          },
+          "userId": {
+            "type": "string",
+            "description": "用户 ID。",
+            "example": "user001"
+          },
+          "productCode": {
+            "type": "string",
+            "description": "商品编码。",
+            "example": "professional"
+          },
+          "productName": {
+            "type": "string",
+            "description": "商品名称快照。",
+            "example": "小欧助手"
+          },
+          "productType": {
+            "type": "integer",
+            "format": "int32",
+            "description": "商品类型。",
+            "example": 2
+          },
+          "productDesc": {
+            "type": "string",
+            "description": "商品说明。",
+            "example": "小欧助手-个人版"
+          },
+          "orderStatus": {
+            "type": "string",
+            "description": "订单状态。",
+            "enum": [
+              "CREATED",
+              "PENDING",
+              "PAID",
+              "CANCELED",
+              "CLOSED",
+              "REFUNDING",
+              "REFUNDED"
+            ],
+            "example": "PAID"
+          },
+          "orderChannel": {
+            "type": "string",
+            "description": "订单终端渠道：web Web 端，mobile 移动端。",
+            "enum": [
+              "web",
+              "mobile"
+            ],
+            "example": "web"
+          },
+          "orderChannelSource": {
+            "type": "string",
+            "description": "订单移动端来源：ios、android。orderChannel=mobile 时有值。",
+            "enum": [
+              "ios",
+              "android"
+            ],
+            "nullable": true,
+            "example": "ios"
+          },
+          "quantity": {
+            "type": "integer",
+            "format": "int32",
+            "description": "购买数量。",
+            "example": 1
+          },
+          "unitPrice": {
+            "type": "number",
+            "format": "double",
+            "description": "单价。",
+            "example": 200
+          },
+          "totalAmount": {
+            "type": "number",
+            "format": "double",
+            "description": "订单总金额。",
+            "example": 200
+          },
+          "discountAmount": {
+            "type": "number",
+            "format": "double",
+            "description": "优惠金额。",
+            "example": 0
+          },
+          "discountUnitPrice": {
+            "type": "number",
+            "format": "double",
+            "description": "优惠后的单价。",
+            "nullable": true,
+            "example": 180
+          },
+          "discountDesc": {
+            "type": "string",
+            "description": "优惠信息。",
+            "nullable": true,
+            "example": "限时优惠"
+          },
+          "voucherDeduction": {
+            "type": "number",
+            "format": "double",
+            "description": "代金券抵扣。",
+            "example": 0
+          },
+          "amountPayable": {
+            "type": "number",
+            "format": "double",
+            "description": "应付金额。",
+            "example": 200
+          },
+          "payAmount": {
+            "type": "number",
+            "format": "double",
+            "description": "实际支付金额。",
+            "example": 200
+          },
+          "currency": {
+            "type": "string",
+            "description": "币种。",
+            "enum": [
+              "CNY",
+              "USD",
+              "EUR",
+              "GBP",
+              "JPY",
+              "HKD"
+            ],
+            "example": "CNY"
+          },
+          "payTime": {
+            "type": "string",
+            "description": "支付时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true,
+            "example": "2026-06-05 10:10:00"
+          },
+          "startTime": {
+            "type": "string",
+            "description": "服务开始时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true,
+            "example": "2026-06-05 10:10:00"
+          },
+          "endTime": {
+            "type": "string",
+            "description": "服务结束时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true,
+            "example": "2026-07-05 23:59:59"
+          },
+          "merchantId": {
+            "type": "string",
+            "description": "商家 ID。",
+            "example": "merchant001"
+          },
+          "serviceSubject": {
+            "type": "string",
+            "description": "服务主体。",
+            "example": "示例服务主体"
+          },
+          "receiveAccountId": {
+            "type": "string",
+            "description": "收款账户 ID。",
+            "example": "account001"
+          },
+          "receiveAccountName": {
+            "type": "string",
+            "description": "收款账户。",
+            "example": "示例收款账户"
+          },
+          "subscriptionType": {
+            "type": "integer",
+            "format": "int32",
+            "description": "订阅类型。",
+            "example": 1
+          },
+          "closeTime": {
+            "type": "string",
+            "description": "订单关闭时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true,
+            "example": "2026-06-05 10:30:00"
+          },
+          "callbackConfigSnapshot": {
+            "type": "string",
+            "description": "订单回调规则快照。",
+            "nullable": true
+          },
+          "callbackFinished": {
+            "type": "integer",
+            "format": "int32",
+            "description": "业务回调是否完结，1 是，0 否。",
+            "example": 0
+          },
+          "callbackSuccess": {
+            "type": "integer",
+            "format": "int32",
+            "description": "业务回调是否成功，1 是，0 否。",
+            "example": 0
+          },
+          "callbackTimes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "已发起业务回调次数。",
+            "example": 0
+          },
+          "nextCallbackTime": {
+            "type": "string",
+            "description": "下一次业务回调时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true
+          },
+          "lastCallbackTime": {
+            "type": "string",
+            "description": "最近一次业务回调时间。格式：yyyy-MM-dd HH:mm:ss。",
+            "nullable": true
+          },
+          "requestRaw": {
+            "type": "string",
+            "description": "请求原始数据，支付请求参数。",
+            "nullable": true
+          },
+          "responseRaw": {
+            "type": "string",
+            "description": "支付平台回调数据，支付结果响应。",
+            "nullable": true
+          }
+        }
+      },
+      "OrderDetailBaseResp": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseResp"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/OrderDetailResp"
+              }
+            }
+          }
+        ]
+      },
+      "OrderDetailResp": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "$ref": "#/components/schemas/OrderInfoResp"
+          },
+          "paymentList": {
+            "type": "array",
+            "description": "订单支付流水列表，按时间倒序返回。当前 DTO 定义为 List<Object>",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "statusHistoryList": {
+            "type": "array",
+            "description": "订单状态变更历史列表，按时间倒序返回。当前 DTO 定义为 List<Object>",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "callbackRecordList": {
+            "type": "array",
+            "description": "业务回调明细列表，记录每一次真实 HTTP 回调请求与响应。当前 DTO 定义为 List<Object>",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          }
+        }
+      }
+    },
+    "responses": {},
+    "securitySchemes": {}
+  },
+  "servers": [],
+  "security": []
+}
