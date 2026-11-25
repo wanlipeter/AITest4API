@@ -1,0 +1,14 @@
+{
+  "name": "default",
+  "response_envelope": {
+    "success_field": "success",
+    "success_values": [true],
+    "failure_values": [false],
+    "code_field": "code",
+    "code_success_values": ["200", 200],
+    "code_failure_values": [101, 400, 401, 403, 404, 500],
+    "message_field": "message",
+    "data_field": "data",
+    "business_error_http_status": 200
+  }
+}

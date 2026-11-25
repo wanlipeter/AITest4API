@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from ..knowledge.apifox_parser import ApiEndpoint, ApifoxOpenApiParser
+from ..profile import Profile
 from ..providers.config import AiProviderConfig, normalize_provider_name
 from ..providers.openai_compatible_provider import OpenAICompatibleProvider
 from .models import Finding, ValidationReport
@@ -15,6 +16,7 @@ class AiCaseReviewer:
         openapi_path: Path | None,
         rule_report: ValidationReport,
         provider: str,
+        profile: Profile = Profile(),
     ) -> list[Finding]:
         try:
             provider = normalize_provider_name(provider)
@@ -29,13 +31,14 @@ class AiCaseReviewer:
                     "你只返回合法 JSON，不要 Markdown，不要解释。"
                     "你的结论是语义建议，不要重复本地规则已经明确指出的问题。"
                 ),
-                user_prompt=self._build_prompt(payload),
+                user_prompt=self._build_prompt(payload, profile),
             )
             return self._findings_from_response(response_text)
         except Exception as error:
+            # AI 审查是建议性能力，基础设施失败不应阻断流程，降级为 warning。
             return [
                 Finding(
-                    severity="error",
+                    severity="warning",
                     code="AI_REVIEW_FAILED",
                     message=f"AI 语义审查失败: {error}",
                     suggestion="请检查 --provider 对应的 API Key、base_url、model 和网络连通性。",
@@ -85,17 +88,19 @@ class AiCaseReviewer:
             "request_fields": [field.__dict__ for field in endpoint.request_fields],
         }
 
-    def _build_prompt(self, payload: dict[str, Any]) -> str:
+    def _build_prompt(self, payload: dict[str, Any], profile: Profile) -> str:
         return (
             "请评审下面的接口测试 cases。\n"
             "重点检查：\n"
-            "1. 假通过风险：例如正向用例断言 success=false、错误 code、数据不存在，"
+            "1. 假通过风险：例如正向用例断言失败语义（按下方系统响应约定）、错误 code、数据不存在，"
             "或只断言 status_code 导致业务失败也通过。\n"
             "2. 业务语义不一致：例如 case_id/name 说 success，但 request/assertions 是失败场景；"
             "missing_required 但没有缺参；invalid_type 但值类型正常。\n"
             "3. 覆盖不足：指出当前用例集缺少的重要场景，如鉴权失败、边界值、空值、枚举非法、"
             "必填缺失、有效数据正向成功等。\n"
             "4. 不要重复 rule_findings 中已经明确列出的问题，除非你能补充更具体的业务风险。\n\n"
+            "系统响应约定（判断成功/失败语义的依据）：\n"
+            f"{profile.response_envelope.describe()}\n\n"
             "输出要求：\n"
             "1. 只返回合法 JSON，不要 Markdown，不要代码块。\n"
             "2. 顶层格式必须是 {\"findings\": [...], \"coverage_suggestions\": [...]}。\n"

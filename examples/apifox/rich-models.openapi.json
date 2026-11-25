@@ -1,0 +1,172 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Rich Model Service",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/customers": {
+      "post": {
+        "summary": "创建客户",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "创建成功"
+          }
+        }
+      }
+    },
+    "/api/payments": {
+      "post": {
+        "summary": "支付",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {"$ref": "#/components/schemas/CardPayment"},
+                  {"$ref": "#/components/schemas/CashPayment"}
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "支付成功"
+          }
+        }
+      }
+    },
+    "/api/orgs": {
+      "post": {
+        "summary": "创建组织",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrgNode"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "创建成功"
+          }
+        }
+      }
+    },
+    "/api/orders": {
+      "get": {
+        "summary": "查询订单列表",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["PAID", "UNPAID", "CANCELLED"]
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Tag"
+            }
+          },
+          {
+            "name": "pageNum",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Tag": {
+        "type": "string",
+        "enum": ["vip", "normal"]
+      },
+      "Address": {
+        "type": "object",
+        "required": ["city"],
+        "properties": {
+          "city": {"type": "string"},
+          "street": {"type": "string"}
+        }
+      },
+      "CustomerCreateRequest": {
+        "type": "object",
+        "required": ["name", "address"],
+        "properties": {
+          "name": {"type": "string"},
+          "level": {"type": "string", "enum": ["GOLD", "SILVER", "BRONZE"]},
+          "address": {"$ref": "#/components/schemas/Address"},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "amounts": {"type": "array", "items": {"type": "number"}},
+          "profile": {"$ref": "#/components/schemas/Profile"}
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "properties": {
+          "nickname": {"type": "string"},
+          "preference": {"$ref": "#/components/schemas/Preference"}
+        }
+      },
+      "Preference": {
+        "type": "object",
+        "properties": {
+          "lang": {"type": "string"},
+          "meta": {"type": "object", "properties": {"key": {"type": "string"}}}
+        }
+      },
+      "CardPayment": {
+        "type": "object",
+        "required": ["cardNo"],
+        "properties": {
+          "cardNo": {"type": "string"},
+          "cvv": {"type": "string"}
+        }
+      },
+      "CashPayment": {
+        "type": "object",
+        "required": ["amount"],
+        "properties": {
+          "amount": {"type": "number"}
+        }
+      },
+      "OrgNode": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "parent": {"$ref": "#/components/schemas/OrgNode"}
+        }
+      }
+    }
+  }
+}

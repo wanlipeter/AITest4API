@@ -3,23 +3,36 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from ..generator.assertions import normalize_assertions
 from ..knowledge.apifox_parser import ApiEndpoint, ApiField, ApifoxOpenApiParser
+from ..profile import Profile
 from .models import Finding, ValidationReport
 
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 SUPPORTED_ASSERTION_TYPES = {"status_code", "json_field", "body_field", "response_field"}
-FAILURE_FIELD_VALUES = {
-    "success": {False, "false", "False", "FALSE", 0, "0"},
-    "code": {"101", "400", "401", "403", "404", "500", 101, 400, 401, 403, 404, 500},
+# 负向场景不参与请求字段类型检查（这些场景本来就传非法值）。
+TYPE_CHECK_EXEMPT_SCENARIOS = {
+    "invalid_type",
+    "boundary",
+    "empty_value",
+    "not_found",
+    "auth_or_permission",
 }
 
 
-def validate_cases_file(cases_path: Path, openapi_path: Path | None = None) -> ValidationReport:
-    return CaseValidator().validate_file(cases_path, openapi_path)
+def validate_cases_file(
+    cases_path: Path,
+    openapi_path: Path | None = None,
+    profile: Profile | None = None,
+) -> ValidationReport:
+    return CaseValidator(profile or Profile()).validate_file(cases_path, openapi_path)
 
 
 class CaseValidator:
+    def __init__(self, profile: Profile = Profile()) -> None:
+        self.profile = profile
+
     def validate_file(self, cases_path: Path, openapi_path: Path | None = None) -> ValidationReport:
         try:
             raw_data = json.loads(cases_path.read_text(encoding="utf-8"))
@@ -108,8 +121,9 @@ class CaseValidator:
             return None, []
 
         try:
-            endpoints = ApifoxOpenApiParser().parse(openapi_path)
-        except (OSError, json.JSONDecodeError, ValueError) as error:
+            parser = ApifoxOpenApiParser()
+            endpoints = parser.parse(openapi_path)
+        except (OSError, json.JSONDecodeError, ValueError, KeyError) as error:
             return None, [
                 Finding(
                     severity="error",
@@ -119,17 +133,29 @@ class CaseValidator:
                 )
             ]
 
+        # 解析器对不支持的结构（外部 $ref、oneOf 截断、超层嵌套等）不静默吞掉，转成 warning。
+        limitation_findings = [
+            Finding(
+                severity="warning",
+                code="OPENAPI_PARSE_LIMITATION",
+                message=message,
+                suggestion="请人工确认相关接口的用例是否覆盖完整。",
+            )
+            for message in parser.last_warnings
+        ]
+
         if not endpoints:
             return endpoints, [
+                *limitation_findings,
                 Finding(
                     severity="warning",
                     code="EMPTY_OPENAPI_ENDPOINTS",
                     message="OpenAPI 文档中没有解析到可校验的接口。",
                     suggestion="请确认文档 paths 中包含 GET/POST/PUT/PATCH/DELETE 接口。",
-                )
+                ),
             ]
 
-        return endpoints, []
+        return endpoints, limitation_findings
 
     def _extract_cases(self, raw_data: Any) -> list[Any] | None:
         if isinstance(raw_data, list):
@@ -338,13 +364,13 @@ class CaseValidator:
         return findings
 
     def _validate_case_semantics(self, case: dict[str, Any], index: int, case_id: str | None) -> list[Finding]:
-        case_text = f"{case_id or ''} {case.get('name', '')}".lower()
-        is_success_case = any(token in case_text for token in ("success", "正向", "成功"))
-        if not is_success_case:
+        # 只对场景为 success 的用例检查失败语义，避免接口名带“成功”连累负向用例。
+        if self._case_scenario(case) != "success":
             return []
 
         findings: list[Finding] = []
-        for assertion in self._normalize_assertions(case.get("assertions")):
+        failure_values = self._failure_field_values()
+        for assertion in normalize_assertions(case.get("assertions")):
             assertion_type = assertion.get("type")
             if assertion_type not in {"json_field", "body_field", "response_field"}:
                 continue
@@ -352,7 +378,9 @@ class CaseValidator:
             path = str(assertion.get("path") or assertion.get("field") or assertion.get("json_path") or "")
             short_path = path.split(".")[-1]
             expected = assertion.get("expected")
-            if short_path in FAILURE_FIELD_VALUES and expected in FAILURE_FIELD_VALUES[short_path]:
+            if not isinstance(expected, (str, int, float, bool)):
+                continue
+            if expected in failure_values.get(short_path, set()):
                 findings.append(
                     Finding(
                         severity="warning",
@@ -404,14 +432,21 @@ class CaseValidator:
             ("body", endpoint.request_fields),
         )
 
-        required_field_count = 0
-        missing_required_count = 0
+        # 各 section 展开成点号键后再比对，与解析器的嵌套展开规则对齐。
+        flattened_sections: dict[str, dict[str, Any]] = {}
         for section_name, expected_fields in sections:
             actual = self._request_section(request, api, section_name)
             actual_dict = actual if isinstance(actual, dict) else {}
+            opaque_fields = {field.name for field in expected_fields if field.type == "object"}
+            flattened_sections[section_name] = self._flatten_request_fields(actual_dict, opaque_fields)
+
+        required_field_count = 0
+        missing_required_count = 0
+        for section_name, expected_fields in sections:
+            flattened = flattened_sections[section_name]
             required_fields = [field for field in expected_fields if field.required]
             required_field_count += len(required_fields)
-            missing_required_count += sum(1 for field in required_fields if field.name not in actual_dict)
+            missing_required_count += sum(1 for field in required_fields if field.name not in flattened)
 
         if scenario == "missing_required" and required_field_count > 0 and missing_required_count == 0:
             findings.append(
@@ -431,13 +466,29 @@ class CaseValidator:
                     index=index,
                     case_id=case_id,
                     section_name=section_name,
-                    actual_fields=self._request_section(request, api, section_name),
+                    actual_fields=flattened_sections[section_name],
                     expected_fields=expected_fields,
                     scenario=scenario,
                 )
             )
 
         return findings
+
+    @staticmethod
+    def _flatten_request_fields(actual: dict[str, Any], opaque_fields: set[str]) -> dict[str, Any]:
+        # 嵌套 dict 展开为点号键；opaque 前缀（按整体 object 处理的字段）和空 dict 保持叶节点。
+        flattened: dict[str, Any] = {}
+
+        def walk(node: dict[str, Any], prefix: str) -> None:
+            for key, value in node.items():
+                full_name = f"{prefix}.{key}" if prefix else key
+                if full_name in opaque_fields or not isinstance(value, dict) or not value:
+                    flattened[full_name] = value
+                else:
+                    walk(value, full_name)
+
+        walk(actual, "")
+        return flattened
 
     def _validate_openapi_fields(
         self,
@@ -482,7 +533,7 @@ class CaseValidator:
                     )
                 continue
 
-            if scenario in {"invalid_type", "boundary"}:
+            if scenario in TYPE_CHECK_EXEMPT_SCENARIOS:
                 continue
 
             if not self._value_matches_type(value, expected_field.type, section_name):
@@ -516,18 +567,37 @@ class CaseValidator:
         return api.get(section_name)
 
     def _case_scenario(self, case: dict[str, Any]) -> str:
+        # 优先读显式 scenario 字段；手改或 AI 漏写时退回关键词猜测。
+        scenario = case.get("scenario")
+        if isinstance(scenario, str) and scenario.strip():
+            return scenario.strip().lower()
+
         case_text = f"{case.get('case_id', '')} {case.get('name', '')}".lower()
-        if "missing_required" in case_text or "缺少必填" in case_text or "缺参" in case_text:
-            return "missing_required"
-        if "invalid_extra" in case_text or "额外参数" in case_text or "多余参数" in case_text:
-            return "invalid_extra"
-        if "invalid_type" in case_text or "类型错误" in case_text:
-            return "invalid_type"
-        if "boundary" in case_text or "边界" in case_text:
-            return "boundary"
-        if "success" in case_text or "正向" in case_text or "成功" in case_text:
+        keyword_scenarios = (
+            ("missing_required", ("missing_required", "缺少必填", "缺参")),
+            ("invalid_extra", ("invalid_extra", "额外参数", "多余参数")),
+            ("invalid_type", ("invalid_type", "类型错误")),
+            ("boundary", ("boundary", "边界")),
+            ("empty_value", ("empty_value", "空值")),
+            ("not_found", ("not_found", "不存在")),
+            ("auth_or_permission", ("auth_or_permission", "鉴权", "未登录", "无权限")),
+        )
+        for canonical, keywords in keyword_scenarios:
+            if any(keyword in case_text for keyword in keywords):
+                return canonical
+        if any(token in case_text for token in ("success", "正向", "成功")):
             return "success"
         return "other"
+
+    def _failure_field_values(self) -> dict[str, set]:
+        # 失败语义表来自 profile：换公司只需改 profiles/<公司>/profile.json。
+        envelope = self.profile.response_envelope
+        table: dict[str, set] = {}
+        if envelope.success_field:
+            table[envelope.success_field] = set(envelope.failure_values)
+        if envelope.code_field:
+            table[envelope.code_field] = set(envelope.code_failure_values)
+        return table
 
     def _value_matches_type(self, value: Any, expected_type: str, section_name: str) -> bool:
         expected_type = (expected_type or "string").lower()
@@ -580,26 +650,8 @@ class CaseValidator:
         return findings
 
     def _normalize_assertions(self, assertions: Any) -> list[dict[str, Any]]:
-        if isinstance(assertions, list):
-            return [self._normalize_single_assertion(item) for item in assertions]
-        if isinstance(assertions, dict):
-            return [self._normalize_single_assertion({key: value}) for key, value in assertions.items()]
-        if isinstance(assertions, str):
-            return [{"type": assertions, "expected": 200}]
-        return []
-
-    def _normalize_single_assertion(self, assertion: Any) -> dict[str, Any]:
-        if isinstance(assertion, dict):
-            if "type" in assertion:
-                return assertion
-            if len(assertion) == 1:
-                assertion_type, expected = next(iter(assertion.items()))
-                if assertion_type in {"status_code", "http_code"}:
-                    return {"type": "status_code", "expected": expected}
-                return {"type": "json_field", "path": assertion_type, "expected": expected}
-        if isinstance(assertion, str):
-            return {"type": assertion, "expected": 200}
-        return {"type": None}
+        # 归一化逻辑统一放在 generator.assertions，避免多份实现漂移。
+        return normalize_assertions(assertions)
 
     def _request_assertion_signature(self, case: dict[str, Any]) -> str:
         payload = {

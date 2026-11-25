@@ -88,9 +88,9 @@ def normalize_provider_name(provider: str) -> str:
 
 
 def _load_env_files(project_dir: Path) -> None:
+    # 只加载 .env；.env.example 是纯文档模板，不能作为配置来源。
     for directory in _candidate_dirs(project_dir):
         _load_dotenv(directory / ".env")
-        _load_dotenv(directory / ".env.example")
 
 
 def _candidate_dirs(project_dir: Path) -> list[Path]:

@@ -1,0 +1,14 @@
+{
+  "name": "mockco",
+  "response_envelope": {
+    "success_field": "ok",
+    "success_values": [true],
+    "failure_values": [false],
+    "code_field": "errCode",
+    "code_success_values": [0],
+    "code_failure_values": [1, "SYS_ERROR"],
+    "message_field": "msg",
+    "data_field": "payload",
+    "business_error_http_status": 400
+  }
+}

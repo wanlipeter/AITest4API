@@ -1,5 +1,7 @@
 from typing import Any
 
+from .assertions import normalize_assertions
+
 
 class CaseNormalizer:
     """把模型输出归一化为框架内部固定用例格式。"""
@@ -28,41 +30,8 @@ class CaseNormalizer:
         return normalized
 
     def _normalize_assertions(self, assertions: Any) -> list[dict[str, Any]]:
-        if isinstance(assertions, list):
-            return [self._normalize_single_assertion(item) for item in assertions]
-
-        if isinstance(assertions, dict):
-            return [
-                self._normalize_single_assertion({assertion_type: expected})
-                for assertion_type, expected in assertions.items()
-            ]
-
-        if isinstance(assertions, str):
-            return [{"type": assertions, "expected": 200}]
-
-        return [{"type": "status_code", "expected": 200}]
-
-    def _normalize_single_assertion(self, assertion: Any) -> dict[str, Any]:
-        if isinstance(assertion, dict):
-            if "type" in assertion:
-                return assertion
-            if len(assertion) == 1:
-                assertion_type, expected = next(iter(assertion.items()))
-                return self._normalize_short_assertion(assertion_type, expected)
-
-        if isinstance(assertion, str):
-            return {"type": assertion, "expected": 200}
-
-        return {"type": "status_code", "expected": 200}
-
-    def _normalize_short_assertion(self, assertion_type: str, expected: Any) -> dict[str, Any]:
-        if assertion_type in {"status_code", "http_code"}:
-            return {"type": "status_code", "expected": expected}
-
-        if assertion_type in {"json_field", "body_field", "response_field"}:
-            if isinstance(expected, dict):
-                return {"type": "json_field", **expected}
-            return {"type": "json_field", "path": assertion_type, "expected": expected}
-
-        # 兼容 {"success": false}、{"code": "101"} 这类响应字段断言简写。
-        return {"type": "json_field", "path": assertion_type, "expected": expected}
+        # 归一化逻辑统一放在 generator.assertions，这里只补齐默认值。
+        normalized = normalize_assertions(assertions)
+        if not normalized:
+            return [{"type": "status_code", "expected": 200}]
+        return normalized

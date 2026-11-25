@@ -6,6 +6,7 @@ from ..generator.case_normalizer import CaseNormalizer
 from ..generator.minimal_case_generator import MinimalAiCaseGenerator
 from ..generator.pytest_code_generator import PytestCodeGenerator
 from ..knowledge.apifox_parser import ApifoxOpenApiParser
+from ..profile import DEFAULT_PROFILE_NAME, Profile, load_profile
 from ..providers.config import AiProviderConfig, normalize_provider_name
 from ..providers.openai_compatible_provider import OpenAICompatibleProvider
 
@@ -22,12 +23,17 @@ class ApifoxGenerateWorkflow:
         output_dir: Path,
         provider: str = "local",
         cases_only: bool = False,
+        profile_name: str = DEFAULT_PROFILE_NAME,
     ) -> tuple[Path, Path | None]:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        endpoints = ApifoxOpenApiParser().parse(document_path)
+        parser = ApifoxOpenApiParser()
+        endpoints = parser.parse(document_path)
+        for warning in parser.last_warnings:
+            print(f"[WARN] {warning}")
         provider = normalize_provider_name(provider)
-        cases = CaseNormalizer().normalize_many(self._generate_cases(endpoints, provider))
+        profile = load_profile(profile_name)
+        cases = CaseNormalizer().normalize_many(self._generate_cases(endpoints, provider, profile))
         if provider != "local":
             self._validate_cloud_case_count(endpoints, cases)
 
@@ -68,14 +74,14 @@ class ApifoxGenerateWorkflow:
         code_path.parent.mkdir(parents=True, exist_ok=True)
         code_path.write_text(PytestCodeGenerator().generate(cases), encoding="utf-8")
 
-    def _generate_cases(self, endpoints, provider: str):
+    def _generate_cases(self, endpoints, provider: str, profile: Profile):
         provider = normalize_provider_name(provider)
         if provider == "local":
-            return MinimalAiCaseGenerator().generate(endpoints)
+            return MinimalAiCaseGenerator(profile).generate(endpoints)
 
         if provider in {"deepseek", "volcengine", "qwen"}:
             config = AiProviderConfig.load(Path.cwd())
-            return OpenAICompatibleProvider(config.chat_settings(provider)).generate_cases(endpoints)
+            return OpenAICompatibleProvider(config.chat_settings(provider)).generate_cases(endpoints, profile)
 
         raise ValueError(f"不支持的 AI Provider: {provider}")
 

@@ -17,6 +17,7 @@ Apifox/OpenAPI JSON
 ## 当前能力
 
 - 支持解析 Apifox/OpenAPI JSON 中的 `paths`、HTTP method、`summary`/`operationId`、query 参数、path 参数、`application/json` 请求体字段和 2xx 成功状态码。
+- 支持按公司/项目的响应包络约定生成断言：`profiles/<名称>/profile.json` 配置成功字段、错误码、message 字段等，换环境不用改框架代码。
 - 支持本地规则生成器，不调用外部模型，适合快速跑通链路。
 - 支持 OpenAI-compatible Chat Completions 协议的云端模型生成用例，目前内置 `deepseek`、`volcengine`、`qwen` 三类 provider。
 - 云端生成会要求每个接口至少 5 条 case，并对模型返回 JSON 做基础提取和常见语法修复。
@@ -42,9 +43,12 @@ pip install pytest
 ```text
 run.py                                  本地启动入口
 examples/apifox/                        Apifox/OpenAPI 示例文档
+profiles/                               响应包络约定（default 默认，mockco 示例）
+tests/                                  框架自身单元测试
 src/ai_api_test/cli.py                  命令行入口
 src/ai_api_test/knowledge/              OpenAPI 解析
 src/ai_api_test/generator/              用例生成、归一化、pytest 代码生成
+src/ai_api_test/profile/                响应包络约定加载
 src/ai_api_test/providers/              AI provider 配置和 OpenAI-compatible 调用
 src/ai_api_test/auth/                   登录态封装
 src/ai_api_test/validator/              用例校验和报告渲染
@@ -158,9 +162,43 @@ auth_or_permission      缺少鉴权或 header
 
 云端模型生成器会根据 prompt 生成更丰富的场景，目标是每个接口 6-8 条，框架会校验每个接口至少 5 条。
 
+## 公司适配 Profile
+
+不同公司后端的响应包络约定不一样（成功字段叫 `success` 还是 `ok`、错误码是 `"200"` 还是 `0`、业务失败返回 HTTP 200 还是 4xx）。这些约定集中在 `profiles/<名称>/profile.json`，生成器断言、校验器失败语义和 AI prompt 都从这里读取：
+
+```text
+profiles/default/profile.json           默认约定：success=true/false + code + message
+profiles/mockco/profile.json            示例：ok=true/false + errCode=0 + msg，业务失败返回 400
+```
+
+字段说明：
+
+```text
+success_field               业务成功标识字段名；没有该字段的系统填 null
+success_values              成功取值列表（取第一个组装断言）
+failure_values              失败取值列表
+code_field                  响应码字段名
+code_success_values         成功码列表
+code_failure_values         常见失败码（用于假通过检测）
+message_field               错误信息字段名
+data_field                  业务数据字段名
+business_error_http_status  业务失败时的 HTTP 状态码（负向用例的 status_code 断言值）
+```
+
+断言组装规则：有 `success_field` 时成功/失败断言用该字段；没有时退回 `code_field`（成功=等于成功码，失败=不等于成功码）。
+
+生成和校验时通过 `--profile` 指定，默认 `default`：
+
+```powershell
+python run.py generate-apifox examples/apifox/order-service.openapi.json --out generated/apifox --profile mockco
+python run.py validate-cases generated/apifox/cases.json --openapi examples/apifox/order-service.openapi.json --profile mockco
+```
+
+换公司/换项目的适配动作：新建 `profiles/<公司>/profile.json`，按上表填写约定即可，不需要改任何框架代码。
+
 ## AI Provider 配置
 
-配置可以来自环境变量，也可以写在项目根目录 `.env` 中。建议从 `.env.example` 复制一份本地 `.env`，真实密钥只放本地，不要提交。
+配置可以来自环境变量，也可以写在项目根目录 `.env` 中。建议从 `.env.example` 复制一份本地 `.env`，真实密钥只放本地，不要提交。注意框架只加载 `.env`，不会读取 `.env.example`。
 
 ```powershell
 Copy-Item .env.example .env
@@ -237,6 +275,7 @@ AUTH_TIMEOUT=20
     {
       "case_id": "get_user_success",
       "case_type": "interface",
+      "scenario": "success",
       "name": "正向用例-获取用户",
       "api": {
         "method": "GET",
@@ -265,6 +304,21 @@ AUTH_TIMEOUT=20
 ```
 
 也兼容根节点直接是 case 数组。`generate-script` 会在生成代码前自动归一化常见简写。
+
+`scenario` 是显式场景标记，本地生成器和 AI 生成的用例都会输出，校验器据此跳过负向场景的请求类型检查、识别正向用例的失败语义断言。允许取值：
+
+```text
+success             正向请求
+missing_required    缺少必填字段
+empty_value         空字符串/空数组/空对象
+invalid_type        类型错误
+boundary            边界值
+invalid_extra       未声明的额外参数
+not_found           数据不存在
+auth_or_permission  鉴权/权限相关
+```
+
+手写用例没有 `scenario` 字段时，校验器会退回按 case_id/name 中的关键词猜测场景。
 
 请求参数位置：
 
@@ -374,7 +428,7 @@ python run.py validate-cases generated/apifox/cases.json --strict
 3. 覆盖不足：缺少正向成功、鉴权失败、边界值、空值、枚举非法等场景
 ```
 
-AI 结果会以 `ai_warning` 输出，默认作为建议项。若本地规则已有 `error`，AI 审查会自动跳过。
+AI 结果会以 `ai_warning` 输出，默认作为建议项。若本地规则已有 `error`，AI 审查会自动跳过。AI 审查自身调用失败会降级为 `warning`（`AI_REVIEW_FAILED`），只提示不阻断。
 
 ## 生成脚本与执行
 
@@ -430,27 +484,44 @@ python run.py analyze-result generated/apifox/test_results.json --out generated/
 
 ## OpenAPI 支持范围
 
-当前解析器优先支持常见、简单、可稳定落地的 OpenAPI 结构：
+当前解析器支持的 OpenAPI 结构：
 
 ```text
 paths
 GET/POST/PUT/PATCH/DELETE
 operation.summary
 operation.operationId
-parameters 中的 query/path 参数
+parameters 中的 query/path 参数（含 $ref 和 enum）
 requestBody.content.application/json.schema
-inline object schema 的 properties 和 required
+本地 $ref（#/components/schemas/...）链式引用，带循环引用保护
+allOf 合并展开；oneOf/anyOf 按第一分支解析
+嵌套 object 展开为点号路径字段（默认 2 层）
+enum 提取（生成用例时取第一个合法枚举值做正向样例）
+array 字段的 items 类型提取
 responses 中第一个 2xx 状态码
 ```
 
-暂未展开支持：
+降级行为（不静默吞掉，会输出 warning）：
 
 ```text
-$ref 复杂引用解析
-oneOf/anyOf/allOf
-深层嵌套 object 字段展开
+oneOf/anyOf：只解析第一分支，其余分支在报告中提示
+嵌套超过 2 层：深层字段按整体 object 处理
+外部 $ref（跨文件引用）：字段跳过并提示
+循环引用：截断并提示
+```
+
+暂未支持：
+
+```text
 form-data、multipart、xml 等非 JSON 请求体
 response schema 自动生成强断言
+数组元素为 object 时的逐字段展开
+```
+
+带完整疑难结构的示例文档见 `examples/apifox/rich-models.openapi.json`（$ref 引用链、嵌套对象、enum、oneOf、自引用），可直接用它试用：
+
+```powershell
+python run.py generate-apifox examples/apifox/rich-models.openapi.json --out generated/rich
 ```
 
 ## 常用命令速查
@@ -464,4 +535,9 @@ python run.py generate-script generated/apifox/cases.json
 pytest generated/apifox/test_generated_api.py
 python run.py analyze-result generated/apifox/test_results.json --out generated/apifox/analysis.md --provider qwen
 python run.py show-config --provider qwen
+python -m pytest tests/                                 # 框架自身单元测试
 ```
+
+## 断言语义说明
+
+生成的测试脚本对 `eq`/`ne` 做标量宽松比较：`"200"` 和 `200`、`true` 和 `"True"` 视为相等，避免字符串/数字混用导致误报；`contains` 对非容器值转字符串后比较，不会抛异常。

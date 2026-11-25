@@ -20,7 +20,7 @@ class LoginConfig:
 
     @classmethod
     def from_env(cls) -> "LoginConfig":
-        # 登录配置统一从环境变量读取，环境变量可来自 .env 或 .env.example。
+        # 登录配置统一从环境变量读取，环境变量可来自 .env。
         return cls(
             enabled=os.getenv("AUTH_ENABLED", "false").strip().lower() == "true",
             login_url=os.getenv("AUTH_LOGIN_URL", "").strip(),
@@ -129,6 +129,7 @@ class LoginSession:
 
     def _base_headers(self) -> dict[str, str]:
         # 与 BaseRequest 保持一致，不手工设置 Content-Length，避免请求体过长时被截断。
+        # 不声明 Accept-Encoding：urllib 不会自动解压，若服务端返回 gzip/br 响应会解析失败。
         return {
             "accept": "application/json, text/plain, */*",
             "accept-language": "zh-CN,zh;q=0.9",
@@ -137,7 +138,6 @@ class LoginSession:
             "pragma": "no-cache",
             "priority": "u=1, i",
             "user-agent": "Jenkins Probe",
-            "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
         }
 

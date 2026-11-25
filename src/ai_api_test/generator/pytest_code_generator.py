@@ -29,20 +29,20 @@ def _add_project_src_to_path():
 
 
 def _load_dotenv():
+    # 只加载 .env；.env.example 是纯文档模板，不能作为配置来源。
     candidates = [Path.cwd(), *Path(__file__).resolve().parents]
     for directory in candidates:
-        for env_name in (".env", ".env.example"):
-            env_path = directory / env_name
-            if not env_path.exists():
+        env_path = directory / ".env"
+        if not env_path.exists():
+            continue
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
                 continue
 
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 _add_project_src_to_path()
@@ -107,14 +107,10 @@ def _fallback_case_id(index):
 
 
 def _normalize_assertions(assertions):
-    if isinstance(assertions, dict):
-        return [
-            {{"type": assertion_type, "expected": expected}}
-            for assertion_type, expected in assertions.items()
-        ]
-    if isinstance(assertions, str):
-        return [{{"type": assertions, "expected": 200}}]
-    return assertions or []
+    # cases 在生成阶段已经由 CaseNormalizer 归一化；这里只做最小防御，异常输入交给断言阶段报错。
+    if isinstance(assertions, list):
+        return assertions
+    return []
 
 
 def _response_json(response_body):
@@ -157,6 +153,23 @@ def _read_json_field(data, path):
     return current
 
 
+def _scalar_eq(actual, expected):
+    # 标量宽松比较：兼容 code "200" 和 200 这类字符串/数字混用。
+    if actual == expected:
+        return True
+    if isinstance(actual, (str, int, float, bool)) and isinstance(expected, (str, int, float, bool)):
+        return str(actual).strip().lower() == str(expected).strip().lower()
+    return False
+
+
+def _contains_value(actual, expected):
+    # contains 对非容器值转字符串比较，避免 TypeError 中断用例。
+    try:
+        return expected in actual
+    except TypeError:
+        return str(expected) in str(actual)
+
+
 def _assert_json_field(response_body, assertion):
     path = assertion.get("path") or assertion.get("field") or assertion.get("json_path")
     if not path:
@@ -167,27 +180,20 @@ def _assert_json_field(response_body, assertion):
     operator = assertion.get("operator", "eq")
 
     if operator == "eq":
-        assert actual == expected, f"JSON 字段 {{path}} 期望 {{expected!r}}，实际 {{actual!r}}"
+        assert _scalar_eq(actual, expected), f"JSON 字段 {{path}} 期望 {{expected!r}}，实际 {{actual!r}}"
     elif operator == "ne":
-        assert actual != expected, f"JSON 字段 {{path}} 不应等于 {{expected!r}}"
+        assert not _scalar_eq(actual, expected), f"JSON 字段 {{path}} 不应等于 {{expected!r}}，实际 {{actual!r}}"
     elif operator == "exists":
         assert actual is not None, f"JSON 字段 {{path}} 期望存在且非 None"
     elif operator == "contains":
-        assert expected in actual, f"JSON 字段 {{path}} 期望包含 {{expected!r}}，实际 {{actual!r}}"
+        assert _contains_value(actual, expected), f"JSON 字段 {{path}} 期望包含 {{expected!r}}，实际 {{actual!r}}"
     else:
         raise AssertionError(f"不支持的 json_field operator: {{operator}}")
 
 
 def _assert_case(case, status_code, response_body):
-    assertions = _normalize_assertions(_safe_case_value(case, "assertions", []))
-
-    for assertion in assertions:
-        if isinstance(assertion, str):
-            assertion = {{"type": assertion, "expected": 200}}
-        if "type" not in assertion and len(assertion) == 1:
-            assertion_type, expected = next(iter(assertion.items()))
-            assertion = {{"type": assertion_type, "expected": expected}}
-
+    # cases 在生成阶段已由 CaseNormalizer 归一化为标准列表结构。
+    for assertion in _normalize_assertions(_safe_case_value(case, "assertions", [])):
         assertion_type = assertion["type"]
         if assertion_type == "status_code":
             assert status_code == assertion["expected"], (

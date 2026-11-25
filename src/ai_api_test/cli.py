@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 
+from .profile import DEFAULT_PROFILE_NAME, Profile, load_profile
 from .providers.config import AiProviderConfig, normalize_provider_name
 from .validator import AiCaseReviewer, Finding, ValidationReport, validate_cases_file
 from .validator.report_renderer import render_report
@@ -13,9 +14,17 @@ ANALYSIS_PROVIDERS = ["deepseek", "volcengine", "qwen"]
 REPORT_FORMATS = ["text", "json", "markdown"]
 
 
-def generate_from_apifox(document_path: Path, output_dir: Path, provider: str, cases_only: bool) -> int:
+def generate_from_apifox(
+    document_path: Path,
+    output_dir: Path,
+    provider: str,
+    cases_only: bool,
+    profile_name: str,
+) -> int:
     provider = normalize_provider_name(provider)
-    cases_path, code_path = ApifoxGenerateWorkflow().run(document_path, output_dir, provider, cases_only)
+    cases_path, code_path = ApifoxGenerateWorkflow().run(
+        document_path, output_dir, provider, cases_only, profile_name
+    )
     print(f"[GENERATED] cases: {cases_path}")
     if code_path is None:
         print("[WAITING] 请人工检查并修改 cases.json，然后执行 generate-script 重新生成测试脚本。")
@@ -57,10 +66,12 @@ def validate_cases(
     openapi_path: Path | None,
     ai_enabled: bool,
     provider: str,
+    profile_name: str,
 ) -> int:
-    report = validate_cases_file(cases_path, openapi_path)
+    profile = load_profile(profile_name)
+    report = validate_cases_file(cases_path, openapi_path, profile)
     if ai_enabled:
-        report = _append_ai_review(report, cases_path, openapi_path, provider)
+        report = _append_ai_review(report, cases_path, openapi_path, provider, profile)
     rendered_report = render_report(report, output_format)
     if output_path is None:
         print(rendered_report)
@@ -76,6 +87,7 @@ def _append_ai_review(
     cases_path: Path,
     openapi_path: Path | None,
     provider: str,
+    profile: Profile,
 ) -> ValidationReport:
     if report.errors:
         return ValidationReport(
@@ -91,7 +103,7 @@ def _append_ai_review(
             ],
         )
 
-    ai_findings = AiCaseReviewer().review_file(cases_path, openapi_path, report, provider)
+    ai_findings = AiCaseReviewer().review_file(cases_path, openapi_path, report, provider, profile)
     return ValidationReport(
         cases_count=report.cases_count,
         findings=[*report.findings, *ai_findings],
@@ -106,6 +118,11 @@ def main() -> int:
     apifox_parser.add_argument("document_path", type=Path)
     apifox_parser.add_argument("--out", type=Path, default=Path("generated/apifox"))
     apifox_parser.add_argument("--provider", choices=AI_PROVIDERS, default="local")
+    apifox_parser.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE_NAME,
+        help="响应包络约定 profile 名称，对应 profiles/<名称>/profile.json。",
+    )
     apifox_parser.add_argument(
         "--cases-only",
         action="store_true",
@@ -132,6 +149,11 @@ def main() -> int:
     validate_parser = subparsers.add_parser("validate-cases")
     validate_parser.add_argument("cases_path", type=Path)
     validate_parser.add_argument("--openapi", type=Path, default=None)
+    validate_parser.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE_NAME,
+        help="响应包络约定 profile 名称，对应 profiles/<名称>/profile.json。",
+    )
     validate_parser.add_argument("--ai", action="store_true", help="Use AI to review semantic risks.")
     validate_parser.add_argument("--provider", choices=ANALYSIS_PROVIDERS, default="deepseek")
     validate_parser.add_argument("--out", type=Path, default=None)
@@ -144,7 +166,9 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "generate-apifox":
-        return generate_from_apifox(args.document_path, args.out, args.provider, args.cases_only)
+        return generate_from_apifox(
+            args.document_path, args.out, args.provider, args.cases_only, args.profile
+        )
     if args.command == "generate-script":
         return generate_script_from_cases(args.cases_path, args.out)
     if args.command == "analyze-result":
@@ -160,6 +184,7 @@ def main() -> int:
             args.openapi,
             args.ai,
             args.provider,
+            args.profile,
         )
     return 2
 
